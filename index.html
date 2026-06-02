@@ -684,12 +684,12 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/fireba
 import { getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyDXSUQwcHGMsgsTRTDCJPXRNH_wmwVIntY",
-  authDomain: "alydibank.firebaseapp.com",
-  projectId: "alydibank",
-  storageBucket: "alydibank.firebasestorage.app",
-  messagingSenderId: "616314431242",
-  appId: "1:616314431242:web:fdb0e26c033704556c3cf3"
+  apiKey: "AIzaSyByzHR4fDfizwqWVV3M5lEjn3mlWV83UcM",
+  authDomain: "alydibank-8d87c.firebaseapp.com",
+  projectId: "alydibank-8d87c",
+  storageBucket: "alydibank-8d87c.firebasestorage.app",
+  messagingSenderId: "1084309646032",
+  appId: "1:1084309646032:web:c565c91ea2a6d516e18cd5"
 };
 
 const fbApp = initializeApp(firebaseConfig);
@@ -770,6 +770,9 @@ window.loadSavedGroup=async function(gid){
 }
 window.removeSavedGroup=function(evt,gid){
   evt.stopPropagation();
+  const item=allSavedGroups().find(g=>g.id===gid);
+  const name=item?.name||'este grupo';
+  if(!confirm(`Remover "${name}" da sua lista?\n\nOs dados do grupo não serão apagados, só sairá da sua tela inicial.`)) return;
   removeGroupFromList(gid);
   if(localStorage.getItem('lastGroup')===gid) localStorage.removeItem('lastGroup');
   renderSavedGroups();
@@ -861,7 +864,25 @@ function startListening(){
   });
 }
 
-async function save(){if(!groupId) return;await updateDoc(doc(db,'groups',groupId),{members:S.members,expenses:S.expenses,history:S.history,deposits:S.deposits,pixKey:S.pixKey,pixInst:S.pixInst,pixSaved:S.pixSaved,groupName:S.groupName,reservaGoal:S.reservaGoal||0});}
+async function save(){
+  if(!groupId) return;
+  try {
+    await setDoc(doc(db,'groups',groupId),{
+      members:S.members,
+      expenses:S.expenses,
+      history:S.history,
+      deposits:S.deposits,
+      pixKey:S.pixKey,
+      pixInst:S.pixInst,
+      pixSaved:S.pixSaved,
+      groupName:S.groupName,
+      reservaGoal:S.reservaGoal||0
+    },{merge:true});
+  } catch(e){
+    console.error('Erro ao salvar:',e);
+    showToast('⚠️ Erro ao salvar. Verifique sua conexão.');
+  }
+}
 
 function updateShareLink(){const url=`${location.origin}${location.pathname}?g=${groupId}`;const el=document.getElementById('share-link-text');if(el)el.textContent=url;}
 window.shareGroup=function(){const url=`${location.origin}${location.pathname}?g=${groupId}`;if(navigator.share)navigator.share({title:'AlydiBank',url});else{navigator.clipboard?.writeText(url);showToast('Link copiado!');}}
