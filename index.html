@@ -720,23 +720,48 @@ function showToast(m){const t=document.getElementById('toast');t.textContent=m;t
 function setLoader(m){document.getElementById('loader-msg').textContent=m;}
 function genId(){return Math.random().toString(36).substring(2,10);}
 
-// ── FIX 1: evitar usuário duplicado ──
-// Chave única por grupo no localStorage
+// ── STORAGE: usa cookies + localStorage como fallback ──
+function setCookie(name,value,days=365){
+  const d=new Date();d.setTime(d.getTime()+(days*24*60*60*1000));
+  document.cookie=`${name}=${encodeURIComponent(value)};expires=${d.toUTCString()};path=/;SameSite=Lax`;
+}
+function getCookie(name){
+  const v=document.cookie.split(';').map(c=>c.trim()).find(c=>c.startsWith(name+'='));
+  return v?decodeURIComponent(v.split('=')[1]):null;
+}
+function setStore(key,value){
+  try{localStorage.setItem(key,value);}catch(e){}
+  setCookie(key,value);
+}
+function getStore(key){
+  try{const v=localStorage.getItem(key);if(v)return v;}catch(e){}
+  return getCookie(key);
+}
+function removeStore(key){
+  try{localStorage.removeItem(key);}catch(e){}
+  document.cookie=`${key}=;expires=Thu, 01 Jan 1970 00:00:00 UTC;path=/;`;
+}
+
 function storageKey(gid){return 'alydi_name_'+gid;}
 
 // ── MÚLTIPLOS GRUPOS ──
 function allSavedGroups(){
-  const raw=localStorage.getItem('alydi_groups');
+  try{const raw=localStorage.getItem('alydi_groups');if(raw)return JSON.parse(raw);}catch(e){}
+  const raw=getCookie('alydi_groups');
   return raw?JSON.parse(raw):[];
 }
 function saveGroupToList(gid,gName,uName){
   const list=allSavedGroups().filter(g=>g.id!==gid);
   list.unshift({id:gid,name:gName,user:uName,ts:Date.now()});
-  localStorage.setItem('alydi_groups',JSON.stringify(list.slice(0,20)));
+  const val=JSON.stringify(list.slice(0,20));
+  try{localStorage.setItem('alydi_groups',val);}catch(e){}
+  setCookie('alydi_groups',val);
 }
 function removeGroupFromList(gid){
   const list=allSavedGroups().filter(g=>g.id!==gid);
-  localStorage.setItem('alydi_groups',JSON.stringify(list));
+  const val=JSON.stringify(list);
+  try{localStorage.setItem('alydi_groups',val);}catch(e){}
+  setCookie('alydi_groups',val);
 }
 
 function renderSavedGroups(){
@@ -783,6 +808,7 @@ window.switchGroup=function(){
   groupId=null; myName=null;
   S={members:[],expenses:[],history:[],deposits:[],pixKey:'',pixInst:'',pixSaved:false,groupName:'Meu Grupo',reservaGoal:0};
   window._amE=undefined; window._amB=undefined;
+  removeStore('lastGroup');
   document.getElementById('main-app').classList.remove('visible');
   document.getElementById('join-screen').classList.remove('hidden');
   // Limpa campos
@@ -801,8 +827,8 @@ window.createGroup=async function(){
   document.getElementById('loader').classList.remove('hidden');
   groupId=genId();myName=uName;
   await setDoc(doc(db,'groups',groupId),{groupName:gName,members:[{name:uName}],expenses:[],history:[],deposits:[],pixKey:'',pixInst:'',pixSaved:false,createdAt:Date.now()});
-  localStorage.setItem(storageKey(groupId),myName);
-  localStorage.setItem('lastGroup',groupId);
+  setStore(storageKey(groupId),myName);
+  setStore('lastGroup',groupId);
   saveGroupToList(groupId,gName,uName);
   startListening();
 }
@@ -821,6 +847,16 @@ window.joinGroup=async function(){
   await joinAndListen();
 }
 
+// ── DEVICE ID: identificador único do dispositivo salvo em cookie ──
+function getDeviceId(){
+  let did=getCookie('alydi_device');
+  if(!did){
+    did='dev_'+Math.random().toString(36).substring(2,10);
+    setCookie('alydi_device',did,3650); // 10 anos
+  }
+  return did;
+}
+
 async function joinAndListen(){
   const ref=doc(db,'groups',groupId);
   const snap=await getDoc(ref);
@@ -833,8 +869,13 @@ async function joinAndListen(){
   } else {
     myName=existing.name;
   }
-  localStorage.setItem(storageKey(groupId),myName);
-  localStorage.setItem('lastGroup',groupId);
+  // Salva deviceId → nome no Firebase
+  const deviceId=getDeviceId();
+  const devices=data.devices||{};
+  devices[deviceId]=myName;
+  await updateDoc(ref,{devices});
+  setStore(storageKey(groupId),myName);
+  setStore('lastGroup',groupId);
   saveGroupToList(groupId,data.groupName||groupId,myName);
   startListening();
 }
@@ -842,6 +883,8 @@ async function joinAndListen(){
 function startListening(){
   if(window._unsubscribe) window._unsubscribe();
   persistGroupInUrl(groupId, myName);
+  setStore(storageKey(groupId),myName);
+  setStore('lastGroup',groupId);
   window._unsubscribe=onSnapshot(doc(db,'groups',groupId),(snap)=>{
     if(!snap.exists()) return;
     S=snap.data();
@@ -1791,19 +1834,30 @@ async function init(){
   const params=new URLSearchParams(location.search);
   const gUrl=params.get('g');
   const uUrl=params.get('u');
-  const lastGroup=localStorage.getItem('lastGroup');
+  const deviceId=getDeviceId();
+  const lastGroup=getStore('lastGroup');
 
   if(gUrl){
     groupId=gUrl;
-    // Tenta achar o nome: 1) localStorage, 2) URL param, 3) lista de grupos salvos
-    const savedName=localStorage.getItem(storageKey(groupId));
+    const savedName=getStore(storageKey(groupId));
     const savedGroup=allSavedGroups().find(g=>g.id===gUrl);
-    const resolvedName=savedName||uUrl||savedGroup?.user||null;
+    let resolvedName=savedName||uUrl||savedGroup?.user||null;
+
+    // Se não achou localmente, busca no Firebase pelo deviceId
+    if(!resolvedName){
+      try{
+        const snap=await getDoc(doc(db,'groups',groupId));
+        if(snap.exists()){
+          const devices=snap.data().devices||{};
+          if(devices[deviceId]) resolvedName=devices[deviceId];
+        }
+      }catch(e){}
+    }
 
     if(resolvedName){
       myName=resolvedName;
-      localStorage.setItem(storageKey(groupId),myName);
-      localStorage.setItem('lastGroup',groupId);
+      setStore(storageKey(groupId),myName);
+      setStore('lastGroup',groupId);
       setLoader('Carregando grupo...');
       document.getElementById('join-screen').classList.add('hidden');
       document.getElementById('loader').classList.remove('hidden');
@@ -1814,19 +1868,22 @@ async function init(){
       document.getElementById('join-screen').classList.remove('hidden');
       renderSavedGroups();
     }
-  } else if(lastGroup&&localStorage.getItem(storageKey(lastGroup))){
-    groupId=lastGroup;myName=localStorage.getItem(storageKey(lastGroup));
+  } else if(lastGroup&&getStore(storageKey(lastGroup))){
+    groupId=lastGroup; myName=getStore(storageKey(lastGroup));
     persistGroupInUrl(groupId,myName);
     setLoader('Carregando grupo...');
     startListening();
   } else {
+    // Tenta recuperar pelo deviceId — busca em todos os grupos salvos no Firebase
     const savedGroups=allSavedGroups();
+
+    // Primeiro tenta da lista local
     if(savedGroups.length>0){
       const last=savedGroups[0];
       groupId=last.id; myName=last.user;
       persistGroupInUrl(groupId,myName);
-      localStorage.setItem(storageKey(groupId),myName);
-      localStorage.setItem('lastGroup',groupId);
+      setStore(storageKey(groupId),myName);
+      setStore('lastGroup',groupId);
       setLoader('Carregando grupo...');
       document.getElementById('join-screen').classList.add('hidden');
       startListening();
