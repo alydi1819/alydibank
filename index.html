@@ -841,7 +841,7 @@ async function joinAndListen(){
 
 function startListening(){
   if(window._unsubscribe) window._unsubscribe();
-  persistGroupInUrl(groupId);
+  persistGroupInUrl(groupId, myName);
   window._unsubscribe=onSnapshot(doc(db,'groups',groupId),(snap)=>{
     if(!snap.exists()) return;
     S=snap.data();
@@ -1780,56 +1780,51 @@ let reopenIdx=null;
 window.confirmReopen=function(hi,evt){evt&&evt.stopPropagation();reopenIdx=hi;const h=S.history[[...S.history].sort((a,b)=>b.month-a.month)[hi]?hi:hi];const sorted=[...S.history].sort((a,b)=>b.month-a.month);const item=sorted[hi];document.getElementById('confirm-reopen-sub').textContent=`${monthLabelFull(item.month)} voltará para Atual e poderá ser editado novamente.`;reopenIdx=S.history.indexOf(item);document.getElementById('confirm-reopen').classList.add('open');}
 window.doReopen=async function(){if(reopenIdx===null)return;S.history.splice(reopenIdx,1);reopenIdx=null;closeConfirm('confirm-reopen');await save();showToast('Mês reaberto!');}
 
-function persistGroupInUrl(gid){
-  // Mantém o groupId na URL sem recarregar a página
+function persistGroupInUrl(gid, uName){
   const url=new URL(location.href);
   url.searchParams.set('g',gid);
+  if(uName) url.searchParams.set('u',uName);
   history.replaceState(null,'',url.toString());
 }
 
 async function init(){
   const params=new URLSearchParams(location.search);
   const gUrl=params.get('g');
+  const uUrl=params.get('u');
   const lastGroup=localStorage.getItem('lastGroup');
 
   if(gUrl){
     groupId=gUrl;
-    const saved=localStorage.getItem(storageKey(groupId));
-    if(saved){
-      myName=saved;
+    // Tenta achar o nome: 1) localStorage, 2) URL param, 3) lista de grupos salvos
+    const savedName=localStorage.getItem(storageKey(groupId));
+    const savedGroup=allSavedGroups().find(g=>g.id===gUrl);
+    const resolvedName=savedName||uUrl||savedGroup?.user||null;
+
+    if(resolvedName){
+      myName=resolvedName;
+      localStorage.setItem(storageKey(groupId),myName);
+      localStorage.setItem('lastGroup',groupId);
       setLoader('Carregando grupo...');
       document.getElementById('join-screen').classList.add('hidden');
       document.getElementById('loader').classList.remove('hidden');
       await joinAndListen();
     } else {
-      // Verifica se tem grupos salvos que batem com esse groupId
-      const savedGroups=allSavedGroups();
-      const match=savedGroups.find(g=>g.id===gUrl);
-      if(match){
-        myName=match.user;
-        setLoader('Carregando grupo...');
-        document.getElementById('join-screen').classList.add('hidden');
-        document.getElementById('loader').classList.remove('hidden');
-        await joinAndListen();
-      } else {
-        document.getElementById('join-code-input').value=location.href;
-        document.getElementById('loader').classList.add('hidden');
-        document.getElementById('join-screen').classList.remove('hidden');
-        renderSavedGroups();
-      }
+      document.getElementById('join-code-input').value=location.href;
+      document.getElementById('loader').classList.add('hidden');
+      document.getElementById('join-screen').classList.remove('hidden');
+      renderSavedGroups();
     }
   } else if(lastGroup&&localStorage.getItem(storageKey(lastGroup))){
     groupId=lastGroup;myName=localStorage.getItem(storageKey(lastGroup));
-    persistGroupInUrl(groupId);
+    persistGroupInUrl(groupId,myName);
     setLoader('Carregando grupo...');
     startListening();
   } else {
-    // Tenta recuperar da lista de grupos salvos
     const savedGroups=allSavedGroups();
     if(savedGroups.length>0){
       const last=savedGroups[0];
       groupId=last.id; myName=last.user;
-      persistGroupInUrl(groupId);
+      persistGroupInUrl(groupId,myName);
       localStorage.setItem(storageKey(groupId),myName);
       localStorage.setItem('lastGroup',groupId);
       setLoader('Carregando grupo...');
